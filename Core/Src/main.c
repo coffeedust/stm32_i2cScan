@@ -21,7 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "uart.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -41,6 +41,8 @@
 /* Private variables ---------------------------------------------------------*/
 I2C_HandleTypeDef hi2c1;
 
+UART_HandleTypeDef huart1;
+
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
@@ -49,13 +51,89 @@ I2C_HandleTypeDef hi2c1;
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_I2C1_Init(void);
+static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+#define memTemperatureBase	0
+#define memTemperatureSize	4
+#define memCO2Base					(memTemperatureBase+memTemperatureSize)
+#define memCO2Size					4
+#define memDeviceNameBase		(memCO2Base+memCO2Size)
+#define memDeviceNameSize		20
 
+void writeEeprom(uint16_t address, uint8_t data) {
+	uint8_t txBuffer[3];
+	txBuffer[0] = address >> 8;
+	txBuffer[1] = address & 0x00ff;
+	txBuffer[2] = data;
+	HAL_I2C_Master_Transmit(&hi2c1, 0xA0, txBuffer, sizeof(txBuffer), 1);
+	HAL_Delay(5);
+}
+
+uint8_t readEeprom(uint16_t address) {
+	uint8_t txBuffer[2];
+	uint8_t rxBuffer;
+	txBuffer[0] = address >> 8;
+	txBuffer[1] = address & 0x00ff;
+	HAL_I2C_Master_Transmit(&hi2c1, 0xA0, txBuffer, sizeof(txBuffer), 1);
+	HAL_I2C_Master_Receive(&hi2c1, 0xA0, &rxBuffer, 1, 1);
+	return rxBuffer;
+}
+
+void writeEeprom2(uint16_t address, uint8_t data) {
+	HAL_I2C_Mem_Write(&hi2c1, 0xA0, address, 2, &data, 1, 1);
+	HAL_Delay(5);
+}
+
+uint8_t readEeprom2(uint16_t address) {
+	uint8_t rxBuffer;
+	HAL_I2C_Mem_Read(&hi2c1, 0xA0, address, 2, &rxBuffer, 1, 1);
+	return rxBuffer;
+}
+
+typedef struct {
+	uint8_t	sec;
+	uint8_t	min;
+	uint8_t hour;
+	uint8_t day;
+	uint8_t date;
+	uint8_t month;
+	uint8_t year;
+} DateTime_t;
+
+void writeRtc(DateTime_t dateTime) {
+	HAL_I2C_Mem_Write(&hi2c1, 0xD0, 0, 1, &dateTime, 7, 1);
+}
+
+DateTime_t readRtc() {
+	DateTime_t result;
+	HAL_I2C_Mem_Read(&hi2c1, 0xD0, 0, 1, &result, 7, 1);
+	return result;
+}
+
+void writeEeprom4Byte(uint16_t address, uint32_t data) {
+	uint8_t buffer[4];
+	memcpy(buffer, &data, 4);
+	writeEeprom(address, buffer[0]);
+	writeEeprom(address+1, buffer[1]);
+	writeEeprom(address+2, buffer[2]);
+	writeEeprom(address+3, buffer[3]);
+}
+
+uint32_t readEeprom4Byte(uint16_t address) {
+	uint8_t rxBuffer[4];
+	uint32_t result;
+	rxBuffer[0] = readEeprom(address);
+	rxBuffer[1] = readEeprom(address + 1);
+	rxBuffer[2] = readEeprom(address + 2);
+	rxBuffer[3] = readEeprom(address + 3);
+	memcpy(&result, rxBuffer, 4);
+	return result;
+}
 /* USER CODE END 0 */
 
 /**
@@ -87,8 +165,20 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_I2C1_Init();
+  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
+  printf("Hello world\n");
+  //reset
+  HAL_GPIO_WritePin(OledReset_GPIO_Port, OledReset_Pin, 0);
+  HAL_Delay(1);
+  HAL_GPIO_WritePin(OledReset_GPIO_Port, OledReset_Pin, 1);
 
+  for(int address = 0; address < 256; address++) {
+  	int result = HAL_I2C_IsDeviceReady(&hi2c1, address, 0, 1);
+  	if(result == HAL_OK) {
+  		printf("%02x = %d\n", address, result);
+  	}
+  }
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -178,15 +268,60 @@ static void MX_I2C1_Init(void)
 }
 
 /**
+  * @brief USART1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART1_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART1_Init 0 */
+
+  /* USER CODE END USART1_Init 0 */
+
+  /* USER CODE BEGIN USART1_Init 1 */
+
+  /* USER CODE END USART1_Init 1 */
+  huart1.Instance = USART1;
+  huart1.Init.BaudRate = 115200;
+  huart1.Init.WordLength = UART_WORDLENGTH_8B;
+  huart1.Init.StopBits = UART_STOPBITS_1;
+  huart1.Init.Parity = UART_PARITY_NONE;
+  huart1.Init.Mode = UART_MODE_TX_RX;
+  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART1_Init 2 */
+
+  /* USER CODE END USART1_Init 2 */
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
   */
 static void MX_GPIO_Init(void)
 {
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
 
   /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(OledReset_GPIO_Port, OledReset_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin : OledReset_Pin */
+  GPIO_InitStruct.Pin = OledReset_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(OledReset_GPIO_Port, &GPIO_InitStruct);
 
 }
 
